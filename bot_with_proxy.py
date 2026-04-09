@@ -1,412 +1,261 @@
 """
-WHYNOT Photoshop Bot - Улучшенная версия
-Использует .env файл для настроек
+WHYNOT Photoshop Bot - С AI удалением фона
+Простая версия для BotHost
 """
 
 import asyncio
 import logging
 import os
+import requests
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, BufferedInputFile
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 # Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Загрузка настроек из .env (опционально)
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-    logger.info("✅ .env файл загружен")
-except ImportError:
-    logger.warning("⚠️ python-dotenv не установлен, используем переменные окружения")
+# ===== НАСТРОЙКИ =====
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8681310168:AAHoG7GRdsClCptLvd8-bT0_vmdiNgrdgG6M")
+REMOVE_BG_API_KEY = os.getenv("REMOVE_BG_API_KEY", "sdeuTvFVGwUXhK1sBCJo7rq6")
 
-# Получаем токен
-BOT_TOKEN = "8681310168:AAGexFEkN6gTZ7cN64o3ZWiRYPsEbhi5mHY"
-
-# Проверка токена (можно убрать эту проверку)
-if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-    logger.error("❌ Токен не настроен! Отредактируй bot.py или создай .env файл")
-    exit(1)
-
-# Создаем бота и диспетчер
+# Создаем бота
 bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+dp = Dispatcher(storage=MemoryStorage())
+
+
+# ===== СОСТОЯНИЯ =====
+class PhotoStates(StatesGroup):
+    waiting_for_photo = State()
+
+
+# ===== ФУНКЦИЯ УДАЛЕНИЯ ФОНА =====
+def remove_background(image_bytes: bytes) -> bytes:
+    """Удаляет фон через remove.bg API"""
+    try:
+        response = requests.post(
+            'https://api.remove.bg/v1.0/removebg',
+            files={'image_file': image_bytes},
+            data={'size': 'auto'},
+            headers={'X-Api-Key': REMOVE_BG_API_KEY},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.content
+        else:
+            logger.error(f"API Error: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        return None
 
 
 # ===== КЛАВИАТУРЫ =====
-
-def get_main_menu():
-    """Главное меню"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📸 Редактировать фото", callback_data="edit_photo"),
-            InlineKeyboardButton(text="✨ Генерация", callback_data="generate")
-        ],
-        [
-            InlineKeyboardButton(text="🎨 Шаблоны", callback_data="templates"),
-            InlineKeyboardButton(text="📚 Мои работы", callback_data="history")
-        ],
-        [
-            InlineKeyboardButton(text="💎 Кредиты", callback_data="credits"),
-            InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")
-        ],
-        [
-            InlineKeyboardButton(text="❓ Помощь", callback_data="help")
-        ]
+def main_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎭 Убрать фон", callback_data="remove_bg")],
+        [InlineKeyboardButton(text="📚 Мои работы", callback_data="history")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
     ])
-    return keyboard
 
-
-def get_back_button():
-    """Кнопка назад"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
+def back_button():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back")]
     ])
-    return keyboard
+
+def cancel_button():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
+    ])
 
 
-# ===== ОБРАБОТЧИКИ КОМАНД =====
-
+# ===== КОМАНДЫ =====
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    """Приветствие при старте"""
-    user_name = message.from_user.first_name
-    
-    welcome_text = (
-        f"👋 Привет, {user_name}!\n\n"
-        f"Я <b>WHYNOT Photoshop</b> — твой AI-помощник для редактирования фото!\n\n"
-        f"🎁 У тебя есть <b>3 бесплатные генерации</b> для старта!\n\n"
-        f"Что я умею:\n"
-        f"• 🎭 Убирать фон\n"
-        f"• ✨ Улучшать качество\n"
-        f"• 🎨 Менять стиль (аниме, живопись, кино)\n"
-        f"• 👔 Менять одежду\n"
-        f"• 🌅 Менять фон\n"
-        f"• И многое другое!\n\n"
-        f"Выбери действие:"
-    )
-    
     await message.answer(
-        welcome_text,
-        reply_markup=get_main_menu(),
+        f"👋 Привет, {message.from_user.first_name}!\n\n"
+        f"Я <b>WHYNOT Photoshop</b> — AI-помощник для фото!\n\n"
+        f"🎭 <b>Умею:</b>\n"
+        f"• Убирать фон с фотографий\n"
+        f"• Делать прозрачный PNG\n\n"
+        f"Выбери действие:",
+        reply_markup=main_menu(),
         parse_mode="HTML"
     )
 
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
-    """Помощь"""
-    help_text = (
+    await message.answer(
         "📖 <b>Как пользоваться:</b>\n\n"
-        "1️⃣ Нажми <b>📸 Редактировать фото</b>\n"
-        "2️⃣ Загрузи свое фото\n"
-        "3️⃣ Выбери что хочешь сделать\n"
-        "4️⃣ Получи результат за 30 секунд!\n\n"
-        "<b>Команды:</b>\n"
-        "/start - Главное меню\n"
-        "/help - Эта справка\n"
-        "/balance - Баланс кредитов\n"
-        "/templates - Все шаблоны\n\n"
-        "<b>Поддержка:</b> @your_support"
-    )
-    
-    await message.answer(
-        help_text,
-        reply_markup=get_back_button(),
+        "1. Нажми 🎭 Убрать фон\n"
+        "2. Отправь фото\n"
+        "3. Жди 10-20 секунд\n"
+        "4. Получи результат!\n\n"
+        "<b>Лимиты:</b> 50 фото/месяц бесплатно",
+        reply_markup=back_button(),
         parse_mode="HTML"
     )
 
 
-@dp.message(Command("balance"))
-async def cmd_balance(message: Message):
-    """Баланс кредитов"""
-    # TODO: Получить реальный баланс из БД
-    balance = 3
-    
-    balance_text = (
-        f"💎 <b>Твой баланс:</b> {balance} кредитов\n\n"
-        f"1 кредит = 1 генерация\n\n"
-        f"Купить больше кредитов:"
-    )
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Купить кредиты", callback_data="buy_credits")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
-    ])
-    
-    await message.answer(
-        balance_text,
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
-
-
-@dp.message(Command("templates"))
-async def cmd_templates(message: Message):
-    """Список шаблонов"""
-    templates_text = (
-        "🎨 <b>Доступные шаблоны:</b>\n\n"
-        "📸 <b>Улучшение фото:</b>\n"
-        "• Убрать фон\n"
-        "• Улучшить качество\n"
-        "• Исправить освещение\n\n"
-        "🎭 <b>Стили:</b>\n"
-        "• Аниме/Манга\n"
-        "• Масляная живопись\n"
-        "• Кинематограф\n\n"
-        "👔 <b>Мода:</b>\n"
-        "• Сменить одежду\n"
-        "• Изменить прическу\n\n"
-        "💼 <b>Бизнес:</b>\n"
-        "• Фото на документы\n"
-        "• Фото товара\n\n"
-        "🎉 <b>Развлечения:</b>\n"
-        "• Киноафиша\n"
-        "• Фигурка\n"
-        "• Стикер\n\n"
-        "<i>Скоро будет еще больше!</i>"
-    )
-    
-    await message.answer(
-        templates_text,
-        reply_markup=get_back_button(),
-        parse_mode="HTML"
-    )
-
-
-# ===== ОБРАБОТЧИКИ CALLBACK =====
-
-@dp.callback_query(F.data == "back_to_menu")
-async def callback_back_to_menu(callback: types.CallbackQuery):
-    """Возврат в главное меню"""
+# ===== CALLBACK =====
+@dp.callback_query(F.data == "back")
+async def cb_back(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     await callback.message.edit_text(
         "🏠 <b>Главное меню</b>\n\nВыбери действие:",
-        reply_markup=get_main_menu(),
+        reply_markup=main_menu(),
         parse_mode="HTML"
     )
     await callback.answer()
 
 
-@dp.callback_query(F.data == "edit_photo")
-async def callback_edit_photo(callback: types.CallbackQuery):
-    """Редактирование фото"""
+@dp.callback_query(F.data == "remove_bg")
+async def cb_remove_bg(callback: types.CallbackQuery, state: FSMContext):
+    if REMOVE_BG_API_KEY == "YOUR_API_KEY_HERE":
+        await callback.message.edit_text(
+            "❌ <b>API ключ не настроен</b>\n\n"
+            "Получи ключ на https://remove.bg/api\n"
+            "и добавь в переменные окружения BotHost",
+            reply_markup=back_button(),
+            parse_mode="HTML"
+        )
+        await callback.answer("⚠️ Не настроено")
+        return
+    
+    await state.set_state(PhotoStates.waiting_for_photo)
     await callback.message.edit_text(
-        "📸 <b>Редактирование фото</b>\n\n"
-        "Загрузи фото, которое хочешь отредактировать.\n\n"
-        "<i>Поддерживаются форматы: JPG, PNG</i>",
-        reply_markup=get_back_button(),
+        "📸 <b>Удаление фона</b>\n\n"
+        "Отправь фото, и я уберу фон!\n\n"
+        "✅ Подходит для:\n"
+        "• Фото людей\n"
+        "• Фото животных\n"
+        "• Фото предметов\n\n"
+        "Жду фото! 📤",
+        reply_markup=cancel_button(),
         parse_mode="HTML"
     )
     await callback.answer()
 
 
-@dp.callback_query(F.data == "generate")
-async def callback_generate(callback: types.CallbackQuery):
-    """Генерация"""
+@dp.callback_query(F.data == "cancel")
+async def cb_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     await callback.message.edit_text(
-        "✨ <b>Генерация изображения</b>\n\n"
-        "Эта функция пока в разработке.\n"
-        "Скоро ты сможешь создавать изображения из текста!",
-        reply_markup=get_back_button(),
-        parse_mode="HTML"
-    )
-    await callback.answer("🚧 В разработке")
-
-
-@dp.callback_query(F.data == "templates")
-async def callback_templates(callback: types.CallbackQuery):
-    """Шаблоны"""
-    await callback.message.edit_text(
-        "🎨 <b>Шаблоны</b>\n\n"
-        "Выбери категорию:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📸 Улучшение фото", callback_data="cat_enhance")],
-            [InlineKeyboardButton(text="🎭 Художественные стили", callback_data="cat_styles")],
-            [InlineKeyboardButton(text="👔 Мода и стиль", callback_data="cat_fashion")],
-            [InlineKeyboardButton(text="💼 Бизнес", callback_data="cat_business")],
-            [InlineKeyboardButton(text="🎉 Развлечения", callback_data="cat_fun")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
-        ]),
-        parse_mode="HTML"
+        "❌ Отменено",
+        reply_markup=main_menu()
     )
     await callback.answer()
 
 
 @dp.callback_query(F.data == "history")
-async def callback_history(callback: types.CallbackQuery):
-    """История"""
+async def cb_history(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "📚 <b>Мои работы</b>\n\n"
-        "У тебя пока нет сохраненных работ.\n"
-        "Создай первую генерацию!",
-        reply_markup=get_back_button(),
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "credits")
-async def callback_credits(callback: types.CallbackQuery):
-    """Кредиты"""
-    # TODO: Получить реальный баланс
-    balance = 3
-    
-    await callback.message.edit_text(
-        f"💎 <b>Баланс кредитов</b>\n\n"
-        f"У тебя: <b>{balance} кредитов</b>\n\n"
-        f"<b>Пакеты кредитов:</b>\n"
-        f"• 10 кредитов — $2.99\n"
-        f"• 50 кредитов — $9.99 ⭐\n"
-        f"• 150 кредитов — $24.99\n\n"
-        f"<i>Или пригласи друга и получи +5 кредитов!</i>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Купить кредиты", callback_data="buy_credits")],
-            [InlineKeyboardButton(text="👥 Пригласить друга", callback_data="referral")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
-        ]),
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "settings")
-async def callback_settings(callback: types.CallbackQuery):
-    """Настройки"""
-    await callback.message.edit_text(
-        "⚙️ <b>Настройки</b>\n\n"
-        "Язык: 🇷🇺 Русский\n"
-        "Качество: Стандартное\n"
-        "Уведомления: Включены",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🌐 Изменить язык", callback_data="change_lang")],
-            [InlineKeyboardButton(text="🔔 Уведомления", callback_data="notifications")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
-        ]),
+        "📚 <b>Мои работы</b>\n\nУ тебя пока нет работ.",
+        reply_markup=back_button(),
         parse_mode="HTML"
     )
     await callback.answer()
 
 
 @dp.callback_query(F.data == "help")
-async def callback_help(callback: types.CallbackQuery):
-    """Помощь"""
+async def cb_help(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "❓ <b>Помощь</b>\n\n"
-        "Если у тебя возникли вопросы:\n\n"
-        "📖 /help - Инструкция\n"
-        "💬 @your_support - Поддержка\n"
-        "📢 @your_channel - Новости\n\n"
-        "<b>FAQ:</b>\n"
-        "• Как работают кредиты?\n"
-        "• Как пригласить друга?\n"
-        "• Какие форматы поддерживаются?",
-        reply_markup=get_back_button(),
+        "Нажми 🎭 Убрать фон и отправь фото.\n"
+        "Результат через 10-20 секунд.",
+        reply_markup=back_button(),
         parse_mode="HTML"
     )
     await callback.answer()
 
 
-# Заглушки для остальных callback
-@dp.callback_query(F.data.startswith("cat_"))
-async def callback_category(callback: types.CallbackQuery):
-    await callback.answer("🚧 Категория в разработке")
+# ===== ОБРАБОТКА ФОТО =====
+@dp.message(PhotoStates.waiting_for_photo, F.photo)
+async def handle_photo(message: Message, state: FSMContext):
+    msg = await message.answer("⏳ <b>Обрабатываю...</b>", parse_mode="HTML")
+    
+    try:
+        # Скачиваем фото
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        photo_bytes = await bot.download_file(file.file_path)
+        
+        await msg.edit_text("⏳ <b>Удаляю фон...</b>\n▓▓▓▓▓░░░░░ 50%", parse_mode="HTML")
+        
+        # Удаляем фон
+        result = await asyncio.to_thread(remove_background, photo_bytes.read())
+        
+        if result:
+            await msg.edit_text("⏳ <b>Отправляю...</b>\n▓▓▓▓▓▓▓▓▓░ 90%", parse_mode="HTML")
+            
+            # Отправляем результат
+            result_file = BufferedInputFile(result, filename="result.png")
+            
+            await message.answer_document(
+                document=result_file,
+                caption="✅ <b>Готово!</b>\n\nФон удален!",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🎭 Еще фото", callback_data="remove_bg")],
+                    [InlineKeyboardButton(text="◀️ В меню", callback_data="back")]
+                ])
+            )
+            
+            await msg.delete()
+            await state.clear()
+        else:
+            await msg.edit_text(
+                "❌ <b>Ошибка</b>\n\n"
+                "Возможно превышен лимит (50 фото/месяц)",
+                reply_markup=back_button(),
+                parse_mode="HTML"
+            )
+            await state.clear()
+            
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await msg.edit_text(
+            "❌ Ошибка. Попробуй еще раз.",
+            reply_markup=back_button()
+        )
+        await state.clear()
 
-
-@dp.callback_query(F.data == "buy_credits")
-async def callback_buy_credits(callback: types.CallbackQuery):
-    await callback.answer("🚧 Оплата скоро будет доступна")
-
-
-@dp.callback_query(F.data == "referral")
-async def callback_referral(callback: types.CallbackQuery):
-    await callback.answer("🚧 Реферальная программа в разработке")
-
-
-# ===== ОБРАБОТЧИКИ ФОТО =====
 
 @dp.message(F.photo)
-async def handle_photo(message: Message):
-    """Обработка фото"""
+async def handle_photo_no_state(message: Message):
     await message.answer(
-        "📸 <b>Фото получено!</b>\n\n"
-        "Выбери что хочешь сделать:",
+        "📸 Фото получено!\n\nЧто делать?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎭 Убрать фон", callback_data="action_remove_bg")],
-            [InlineKeyboardButton(text="✨ Улучшить качество", callback_data="action_enhance")],
-            [InlineKeyboardButton(text="🎨 Изменить стиль", callback_data="action_style")],
-            [InlineKeyboardButton(text="🌅 Сменить фон", callback_data="action_change_bg")],
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data="back_to_menu")]
-        ]),
-        parse_mode="HTML"
+            [InlineKeyboardButton(text="🎭 Убрать фон", callback_data="remove_bg")],
+            [InlineKeyboardButton(text="◀️ В меню", callback_data="back")]
+        ])
     )
 
-
-@dp.callback_query(F.data.startswith("action_"))
-async def callback_action(callback: types.CallbackQuery):
-    """Обработка действий с фото"""
-    action = callback.data.replace("action_", "")
-    
-    await callback.message.edit_text(
-        f"⏳ <b>Обрабатываю...</b>\n\n"
-        f"Обычно это занимает 15-30 секунд.\n"
-        f"Не закрывай чат!",
-        parse_mode="HTML"
-    )
-    
-    # TODO: Здесь будет реальная обработка через AI
-    await asyncio.sleep(2)
-    
-    await callback.message.edit_text(
-        f"🚧 <b>Функция в разработке</b>\n\n"
-        f"Скоро здесь будет настоящая AI-магия!\n"
-        f"Следи за обновлениями.",
-        reply_markup=get_back_button(),
-        parse_mode="HTML"
-    )
-    
-    await callback.answer()
-
-
-# ===== ОБРАБОТЧИК ОСТАЛЬНЫХ СООБЩЕНИЙ =====
 
 @dp.message()
 async def handle_other(message: Message):
-    """Обработка остальных сообщений"""
-    await message.answer(
-        "Я понимаю только команды и фото.\n"
-        "Попробуй /start для главного меню",
-        reply_markup=get_back_button()
-    )
+    await message.answer("Попробуй /start")
 
 
-# ===== ЗАПУСК БОТА =====
-
+# ===== ЗАПУСК =====
 async def main():
-    """Запуск бота"""
     logger.info("🚀 Бот запускается...")
-    logger.info("Нажми Ctrl+C для остановки")
+    if REMOVE_BG_API_KEY != "YOUR_API_KEY_HERE":
+        logger.info("✅ API ключ настроен")
+    else:
+        logger.warning("⚠️ API ключ не настроен")
     
-    # Удаляем старые обновления
     await bot.delete_webhook(drop_pending_updates=True)
-    
-    # Запускаем polling
-    try:
-        await dp.start_polling(bot)
-    except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
-    finally:
-        await bot.session.close()
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("\n👋 Бот остановлен")
+        logger.info("Бот остановлен")
