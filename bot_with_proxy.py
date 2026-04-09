@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # ===== НАСТРОЙКИ =====
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8681310168:AAHoG7GRdsClCptLvd8-bT0_vmdiNgrdgG6M")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAY7epTfBCN0EwU91JQw5iRRSyXHTw5U6c")
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
 
 # Создаем бота
